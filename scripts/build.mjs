@@ -1,16 +1,10 @@
-// Builds the animated profile assets (Ember Shell).
+// Builds the static profile assets (Ember Shell): assets/hero.svg and assets/tile-*.svg.
 //   node scripts/build.mjs
-// Writes assets/hero.svg and assets/tile-*.svg. Each SVG is self-contained:
-// GitHub serves README images through a proxy that blocks external fonts and
-// scripts, so the font is embedded (subset to the glyphs used) and every
-// animation is plain CSS.
+// The daily activity block lives in scripts/activity.mjs.
 
 import { writeFile, mkdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = path.join(ROOT, "assets");
+import { OUT, C, ADV, esc, n, chevron, arrowNE, windowChrome, terminalCss, toolCall, REDUCED_MOTION, render } from "./lib.mjs";
 
 /* ------------------------------------------------------------------ content */
 
@@ -74,26 +68,18 @@ const TILES = [
   },
 ];
 
-/* ------------------------------------------------------------------ palette */
+/* ------------------------------------------------------------------ torus */
 
-const C = {
-  bg: "#0d0a08", bar: "#16110d", line: "#2a201a", off: "#3a2c22",
-  text: "#f3e6da", muted: "#9a8577", accent: "#ff7a1a",
-  hot: "#ffb070", mid: "#ff7a1a", deep: "#7a3810",
-};
-const ADV = 0.6; // JetBrains Mono advance width, in em
+// Seamless loop: both rotation angles advance by exactly one full turn per cycle,
+// so the frame after the last one is the first one again.
+export const TORUS = { frames: 60, seconds: 6, staticFrame: 45 }; // staticFrame: shown with reduced motion (hole visible)
 
-/* ------------------------------------------------------------------ helpers */
-
-const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-const n = (v) => +v.toFixed(2);
-
-function torusFrames({ cols = 40, rows = 22, frames = 40 } = {}) {
+export function torusFrames({ cols = 40, rows = 22, frames }) {
   const ramp = ".,-~:;=!*#$@";
   const out = [];
   for (let f = 0; f < frames; f++) {
     const A = 1 + (f * Math.PI * 2) / frames;
-    const B = 0.6 + (f * Math.PI) / frames;
+    const B = 0.6 + (f * Math.PI * 2) / frames;
     const buf = new Array(cols * rows).fill(" ");
     const z = new Array(cols * rows).fill(0);
     const cA = Math.cos(A), sA = Math.sin(A), cB = Math.cos(B), sB = Math.sin(B);
@@ -137,58 +123,38 @@ function frameText(lines, { x, y, size, lineH, cls, delay }) {
   return `<text class="${cls}" font-size="${size}" style="animation-delay:${delay}s">${rows}</text>`;
 }
 
-function elbow(x, y) { return `<path d="M${x} ${y - 11}v6h7" fill="none" stroke="${C.off}" stroke-width="1.2"/>`; }
-function chevron(x, y, extra = "") { return `<path d="M${x} ${y - 9}l5 4.5-5 4.5" fill="none" stroke="${C.accent}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${extra}/>`; }
-function arrowNE(x, y) { return `<path d="M${x} ${y + 8}l8-8M${x + 2} ${y}h6v6" fill="none" stroke="${C.accent}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`; }
-
 /* ------------------------------------------------------------------ hero */
 
 function hero() {
-  const W = 846, H = 440, fs = 13, cw = fs * ADV;
-  const typeW = n(HERO.command.length * cw);
-  const FR = 40, T = 4, STATIC_FRAME = 34; // frame shown with reduced motion: hole clearly visible
-  const frames = torusFrames({ frames: FR });
+  const W = 846, H = 440, fs = 13;
+  const { frames: FR, seconds: T, staticFrame } = TORUS;
+  const { typeW, css: termCss } = terminalCss(HERO.command, { fs });
   const label = `Terminal running argta --whoami. Tobias Arangio: ${HERO.role}. ${HERO.bio.join(" ")} Stack: ${HERO.stack.split(/\s+/).join(", ")}. ${HERO.motto}.`;
 
-  const css = `
-text{font-family:JM,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0}
-.b{font-weight:700}.t{fill:${C.text}}.m{fill:${C.muted}}.a{fill:${C.accent}}
-.in{animation:in .45s cubic-bezier(.2,.7,.2,1) both}
-@keyframes in{from{opacity:0;transform:translateY(5px)}}
-.cover{animation:type .9s steps(${HERO.command.length}) .35s both}
-@keyframes type{to{transform:translateX(${typeW}px)}}
-.dot{animation:dot .4s step-end both}
-@keyframes dot{from{fill:${C.off}}}
+  // Frame f is visible during [f/FR, (f+1)/FR) of each cycle. A negative delay of
+  // (FR - f) slots starts its keyframes so that it lights up exactly in its slot.
+  const css = `${termCss}
 .draw{stroke-dasharray:1;animation:draw 1s cubic-bezier(.65,0,.35,1) 2.9s both}
 @keyframes draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
 .f{opacity:0;animation:fr ${T}s step-end infinite}.f0{opacity:1}
 @keyframes fr{0%{opacity:1}${n(100 / FR)}%{opacity:0}100%{opacity:0}}
 .lh{fill:${C.hot}}.lm{fill:${C.mid}}.ld{fill:${C.deep}}
-.bl{animation:bl 1.05s steps(1) 4.4s infinite}
-@keyframes bl{50%{opacity:0}}
-@media (prefers-reduced-motion:reduce){*{animation:none!important}.cover{display:none}}`;
+${REDUCED_MOTION}`;
 
-  const calls = HERO.calls.map(([tool, result], i) => {
-    const y = 98 + i * 22, d = n(1.45 + i * 0.4);
-    return `<g class="in" style="animation-delay:${d}s"><circle cx="34" cy="${y - 4.5}" r="3.6" class="a dot" style="animation-delay:${d}s"/><text x="48" y="${y}" font-size="${fs}" class="t b">${esc(tool)}</text>${elbow(290, y)}<text x="304" y="${y}" font-size="${fs}" class="m">${esc(result)}</text></g>`;
-  }).join("");
-
+  const frames = torusFrames({ frames: FR });
   const ascii = frames.map((lines, f) =>
-    frameText(lines, { x: 64, y: 196, size: 8.6, lineH: 8.6, cls: f === STATIC_FRAME ? "f f0" : "f", delay: -n((f * T) / FR) })
+    frameText(lines, {
+      x: 64, y: 196, size: 8.6, lineH: 8.6,
+      cls: f === staticFrame ? "f f0" : "f",
+      delay: -n((((FR - f) % FR) * T) / FR),
+    })
   ).join("");
 
-  const body = `
-<defs><clipPath id="win"><rect width="${W}" height="${H}" rx="12"/></clipPath></defs>
-<g clip-path="url(#win)">
-<rect width="${W}" height="${H}" fill="${C.bg}"/>
-<rect width="${W}" height="34" fill="${C.bar}"/>
-<line x1="0" x2="${W}" y1="34" y2="34" stroke="${C.line}"/>
-<circle cx="20" cy="17" r="4.5" fill="${C.off}"/><circle cx="36" cy="17" r="4.5" fill="${C.off}"/><circle cx="52" cy="17" r="4.5" fill="${C.off}"/>
-<text x="${W / 2}" y="21" font-size="11" class="m" text-anchor="middle">${esc(HERO.host)}</text>
+  const body = `${windowChrome(W, H, HERO.host)}
 ${chevron(30, 66)}
 <text x="48" y="66" font-size="${fs}" class="t">${esc(HERO.command)}</text>
 <rect class="cover" x="48" y="52" width="${n(typeW + 4)}" height="19" fill="${C.bg}"/>
-${calls}
+${HERO.calls.map(([tool, result], i) => toolCall(tool, result, 98 + i * 22, n(1.45 + i * 0.4), fs)).join("")}
 <rect x="22" y="164" width="802" height="236" rx="10" fill="none" stroke="${C.accent}" stroke-opacity=".6" pathLength="1" class="draw"/>
 <line x1="320" x2="320" y1="186" y2="378" stroke="${C.line}" class="in" style="animation-delay:3.3s"/>
 <g class="in" style="animation-delay:3.2s">${ascii}</g>
@@ -207,7 +173,6 @@ ${calls}
 function tile(t) {
   const lg = t.size === "lg";
   const W = lg ? 423 : 211, H = 170, pad = lg ? 22 : 18;
-  const css = `text{font-family:JM,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0}.b{font-weight:700}`;
   const art = lg && t.art
     ? `<g font-size="11" fill="${C.deep}">${t.art.map((l, i) => `<text x="${W - pad - 15 * 11 * ADV}" y="${46 + i * 14}">${esc(l)}</text>`).join("")}</g>`
     : "";
@@ -220,43 +185,17 @@ ${art}
 ${t.desc.map((l, i) => `<text x="${pad}" y="${(lg ? 98 : 92) + i * (lg ? 18 : 16)}" font-size="${lg ? 12.5 : 11}" fill="${C.muted}">${esc(l)}</text>`).join("")}
 <circle cx="${pad + 3.5}" cy="${H - 26}" r="3.5" fill="${C.accent}"/>
 <text x="${pad + 14}" y="${H - 22}" font-size="${lg ? 11.5 : 10.5}" fill="${C.accent}">${esc(t.foot)}</text>`;
-  return { W, H, label: t.alt, css, body };
-}
-
-/* ------------------------------------------------------------------ fonts */
-
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-
-function glyphsOf(svgBody) {
-  const chars = new Set(" ");
-  for (const m of svgBody.matchAll(/<text\b[^>]*>([\s\S]*?)<\/text>/g)) {
-    const txt = m[1].replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
-    for (const ch of txt) chars.add(ch);
-  }
-  return [...chars].sort().join("");
-}
-
-async function fontFace(weight, text) {
-  const url = `https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@${weight}&text=${encodeURIComponent(text)}`;
-  const css = await (await fetch(url, { headers: { "User-Agent": UA } })).text();
-  const src = css.match(/url\((https:[^)]+)\)\s*format\('(woff2?)'\)/);
-  if (!src) throw new Error(`No web font for weight ${weight}:\n${css}`);
-  const buf = Buffer.from(await (await fetch(src[1], { headers: { "User-Agent": UA } })).arrayBuffer());
-  return `@font-face{font-family:JM;font-weight:${weight};src:url(data:font/${src[2]};base64,${buf.toString("base64")}) format('${src[2]}')}`;
-}
-
-async function render({ W, H, label, css, body }) {
-  const glyphs = glyphsOf(body);
-  const faces = await Promise.all([400, 700].map((w) => fontFace(w, glyphs)));
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title><style>${faces.join("")}${css.replace(/\n/g, "")}</style>${body.replace(/\n/g, "")}</svg>\n`;
+  return { W, H, label: t.alt, css: "", body };
 }
 
 /* ------------------------------------------------------------------ main */
 
-await mkdir(OUT, { recursive: true });
-const jobs = [["hero", hero()], ...TILES.map((t) => [t.file, tile(t)])];
-for (const [name, spec] of jobs) {
-  const svg = await render(spec);
-  await writeFile(path.join(OUT, `${name}.svg`), svg);
-  console.log(`${name}.svg  ${(svg.length / 1024).toFixed(1)} KB`);
+if (import.meta.url === `file://${process.argv[1]}`) {
+  await mkdir(OUT, { recursive: true });
+  const jobs = [["hero", hero()], ...TILES.map((t) => [t.file, tile(t)])];
+  for (const [name, spec] of jobs) {
+    const svg = await render(spec);
+    await writeFile(path.join(OUT, `${name}.svg`), svg);
+    console.log(`${name}.svg  ${(svg.length / 1024).toFixed(1)} KB`);
+  }
 }
